@@ -1,0 +1,41 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.so
+*.pyo
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Pip dependency file
+pip-log.txt
+
+# FastAPI specific
+instance/
+logs/
+*.log
+
+# Environment variables
+app/.env
+.env
+.env.local
+*.secrets*
+
+# macOS system files
+.DS_Store
+
+# VSCode
+.vscode/
+
+# PyCharm
+.idea/
+*.iml
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Database files
+*.sqlite3
+*.db
