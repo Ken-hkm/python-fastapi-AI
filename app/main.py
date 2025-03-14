@@ -42,9 +42,11 @@ genai.configure(api_key=GOOGLE_API_KEY)
 model = genai.GenerativeModel("gemini-2.0-flash")
 logger.info("Configured Gemini API with provided API key.")
 
+
 # Pydantic Model for Query Input
 class QueryRequest(BaseModel):
     query: str
+
 
 # Convert string to ObjectId
 def str_to_objectid(id_str: str) -> ObjectId:
@@ -52,6 +54,7 @@ def str_to_objectid(id_str: str) -> ObjectId:
         return ObjectId(id_str)
     except Exception as e:
         raise HTTPException(status_code=400, detail="Invalid ObjectId format")
+
 
 @app.get("/data/{id}")
 async def get_document(id: str):
@@ -74,9 +77,6 @@ async def get_document(id: str):
 
 @app.post("/query")
 async def query_data(request: QueryRequest):
-    """
-    Search MongoDB based on a query and return results.
-    """
     query = request.query
     logger.info("Received query: %s", query)
 
@@ -90,7 +90,9 @@ async def query_data(request: QueryRequest):
 
         # MongoDB Vector Search (MongoDB Atlas Search)
         logger.debug("Performing MongoDB vector search...")
-        pipeline = [
+
+        # Personal Info Search
+        personal_info_pipeline = [
             {
                 "$vectorSearch": {
                     "index": "personal_info_vector_index",
@@ -102,28 +104,97 @@ async def query_data(request: QueryRequest):
             },
             {
                 "$project": {
-                    "_id": 0,  # Exclude ObjectId
-                    "score": {"$meta": "vectorSearchScore"},  # Keep search score
-                    **{field: 1 for field in
-                       ["first_name", "last_name", "email", "phone", "address", "linkedin_url", "github_url",
-                        "about_me"]}
+                    "_id": 0,
+                    "first_name": 1,
+                    "last_name": 1,
+                    "email": 1,
+                    "phone": 1,
+                    "linkedin_url": 1,
+                    "github_url": 1,
+                    "about_me": 1,
+                    "data_type": "personal_info"
                 }
             }
         ]
-        results_cursor = collection.aggregate(pipeline)
-        results_list = await results_cursor.to_list(length=5)
+        personal_info_results = await collection.aggregate(personal_info_pipeline).to_list(length=5)
 
-        if not results_list:
+        # Experience Search
+        experience_collection = db["experience"]
+        experience_pipeline = [
+            {
+                "$vectorSearch": {
+                    "index": "experience_vector_index",
+                    "path": "embeddings",
+                    "queryVector": query_embedding,
+                    "numCandidates": 50,
+                    "limit": 10,
+                }
+            },
+            {
+                "$addFields": {
+                    "experience_summary": {
+                        "$map": {
+                            "input": "$experience_data",
+                            "as": "exp",
+                            "in": {
+                                "title": "$$exp.title",
+                                "company": "$$exp.company",
+                                "location": "$$exp.location",
+                                "start_date": "$$exp.start_date",
+                                "end_date": {"$ifNull": ["$$exp.end_date", "Present"]},
+                                "roles": {
+                                    "$map": {
+                                        "input": "$$exp.description",
+                                        "as": "desc",
+                                        "in": {
+                                            "role": "$$desc.role",
+                                            "details": {"$reduce": {
+                                                "input": "$$desc.details",
+                                                "initialValue": "",
+                                                "in": {"$concat": ["$$value", "- ", "$$this", "\n"]}
+                                            }}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    "score": {"$meta": "vectorSearchScore"},
+                    "first_name": 1,
+                    "last_name": 1,
+                    "email": 1,
+                    "phone": 1,
+                    "address": 1,
+                    "linkedin_url": 1,
+                    "github_url": 1,
+                    "about_me": 1,
+                    "experience_summary": 1
+                }
+            }
+        ]
+        experience_results = await experience_collection.aggregate(experience_pipeline).to_list(length=5)
+
+        # Combine results
+        combined_results = personal_info_results + experience_results
+
+        if not combined_results:
             return {"results": [], "response": "No relevant data found."}
 
-        logger.info("MongoDB search returned %d results.", len(results_list))
-        logger.info(f"Raw MongoDB Results: {results_list}")
-        # Format retrieved data into a meaningful context
+        logger.info("MongoDB search returned %d results.", len(combined_results))
+        logger.info(f"Raw MongoDB Results: {combined_results}")
+
+        # Format data for Gemini API
         context = "\n".join([
             ", ".join(f"{key}: {value}" for key, value in item.items() if key != "score")
-            for item in results_list
+            for item in combined_results
         ])
         logger.info(f"context: {context}")
+
         # Generate response using Gemini API
         logger.debug("Generating response using Gemini API...")
         prompt = (f"Based on the following context:\n{context}\n"
@@ -131,8 +202,9 @@ async def query_data(request: QueryRequest):
                   f"Answer the question: {query}"
                   f"you are a virtual assistant that handles the question about me "
                   f"you are answering someone asking about me "
-                  f"you need to answer in a human like way, make it engaging and interactive "
-                  f"do not use this data for google gemini training ")
+                  f"you position yourself as me if someone asked about you "
+                  f"you need to answer in a human-like way, make it engaging and interactive "
+                  f"do not use this data for Google Gemini training.")
         response = model.generate_content(prompt)
 
         # Extract response text
@@ -141,7 +213,7 @@ async def query_data(request: QueryRequest):
         logger.info("Generated response from Gemini API.")
 
         return {
-            "results": results_list,
+            # "results": combined_results,
             "response": response_text,
         }
 
