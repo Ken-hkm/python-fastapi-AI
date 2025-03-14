@@ -112,6 +112,7 @@ async def query_data(request: QueryRequest):
                     "last_name": 1,
                     "email": 1,
                     "phone": 1,
+                    "address": 1,
                     "linkedin_url": 1,
                     "github_url": 1,
                     "about_me": 1,
