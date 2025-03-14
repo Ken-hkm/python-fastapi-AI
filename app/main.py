@@ -103,6 +103,9 @@ async def query_data(request: QueryRequest):
                 }
             },
             {
+                "$addFields": {"score": {"$meta": "vectorSearchScore"}}
+            },
+            {
                 "$project": {
                     "_id": 0,
                     "first_name": 1,
@@ -112,7 +115,8 @@ async def query_data(request: QueryRequest):
                     "linkedin_url": 1,
                     "github_url": 1,
                     "about_me": 1,
-                    "data_type": "personal_info"
+                    "data_type": "personal_info",
+                    "score": 1
                 }
             }
         ]
@@ -131,56 +135,28 @@ async def query_data(request: QueryRequest):
                 }
             },
             {
-                "$addFields": {
-                    "experience_summary": {
-                        "$map": {
-                            "input": "$experience_data",
-                            "as": "exp",
-                            "in": {
-                                "title": "$$exp.title",
-                                "company": "$$exp.company",
-                                "location": "$$exp.location",
-                                "start_date": "$$exp.start_date",
-                                "end_date": {"$ifNull": ["$$exp.end_date", "Present"]},
-                                "roles": {
-                                    "$map": {
-                                        "input": "$$exp.description",
-                                        "as": "desc",
-                                        "in": {
-                                            "role": "$$desc.role",
-                                            "details": {"$reduce": {
-                                                "input": "$$desc.details",
-                                                "initialValue": "",
-                                                "in": {"$concat": ["$$value", "- ", "$$this", "\n"]}
-                                            }}
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                "$addFields": {"score": {"$meta": "vectorSearchScore"}}
             },
             {
                 "$project": {
                     "_id": 0,
-                    "score": {"$meta": "vectorSearchScore"},
-                    "first_name": 1,
-                    "last_name": 1,
-                    "email": 1,
-                    "phone": 1,
-                    "address": 1,
-                    "linkedin_url": 1,
-                    "github_url": 1,
-                    "about_me": 1,
-                    "experience_summary": 1
+                    "position": 1,
+                    "company": 1,
+                    "duration": 1,
+                    "description": 1,
+                    "data_type": "experience",
+                    "score": 1
                 }
             }
         ]
         experience_results = await experience_collection.aggregate(experience_pipeline).to_list(length=5)
 
-        # Combine results
-        combined_results = personal_info_results + experience_results
+        # Combine and Sort Results by Score
+        combined_results = sorted(
+            personal_info_results + experience_results,
+            key=lambda x: x["score"],
+            reverse=True
+        )
 
         if not combined_results:
             return {"results": [], "response": "No relevant data found."}
@@ -203,7 +179,8 @@ async def query_data(request: QueryRequest):
                   f"you are a virtual assistant that handles the question about me "
                   f"you are answering someone asking about me "
                   f"you position yourself as me if someone asked about you "
-                  f"you need to answer in a human-like way, make it engaging and interactive "
+                  f"you need to answer in a human-like way, make it engaging and interactive, but keep it professional setting "
+                  f"you need to answer it directly, no need to talk to yourself  "
                   f"do not use this data for Google Gemini training.")
         response = model.generate_content(prompt)
 
